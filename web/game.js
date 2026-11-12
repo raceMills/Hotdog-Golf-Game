@@ -82,8 +82,12 @@ function selectClub(i) {
 }
 function renderClubs() {
   if (!G || G.mode !== 'play') { $('clubs').innerHTML = ''; return; }
-  $('clubs').innerHTML = CLUBS.map((c, i) =>
+  let html = CLUBS.map((c, i) =>
     `<button class="club ${i === G.club ? 'on' : ''}" onclick="selectClub(${i})">${c.name}</button>`).join('');
+  if (G.club === 0 && !motionOn && typeof DeviceMotionEvent !== 'undefined') {
+    html += `<button class="club on" onclick="enableMotion()">📱 Phone putting</button>`;
+  }
+  $('clubs').innerHTML = html;
 }
 
 // ---- Round flow ----
@@ -133,6 +137,7 @@ function nextTurn() {
 }
 // Fires a resolved shot: the ball flies the arc, then rolls.
 function takeShot(shot) {
+  mot = null;
   const i = G.turn, b = G.balls[i], h = G.C.holes[G.hole];
   const r = resolveShot(h, b.pos.x, b.pos.y, shot);
   b.shots.push(shot);
@@ -181,7 +186,9 @@ function updateHUD() {
   const pl = G.players[G.turn], b = G.balls[G.turn];
   if (G.mode === 'replay') $('turnLbl').textContent = `Replaying ${pl.p.name}`;
   else $('turnLbl').textContent = `${pl.p.name}'s turn · ${b.strokes} stroke${b.strokes === 1 ? '' : 's'}`;
-  $('hint').textContent = G.mode === 'replay' ? '' : 'Drag the arc through the ball like a backswing. Drag elsewhere to aim.';
+  let hint = 'Drag the arc through the ball like a backswing. Drag elsewhere to aim.';
+  if (motionMode()) hint = 'Sway the phone back, then forward through the ball. Drag to aim.';
+  $('hint').textContent = G.mode === 'replay' ? '' : hint;
 }
 function quitGame() {
   const back = G && G.mode === 'replay' ? 'history' : 'menu';
@@ -226,6 +233,7 @@ cv.addEventListener('pointerdown', e => {
   const w = screenToWorld(e), b = G.balls[G.turn];
   if (!b || b.done) return;
   cv.setPointerCapture(e.pointerId);
+  if (motionMode()) { G.swing = { id: e.pointerId, aiming: true }; setAimFrom(w); return; }
   const g = arcGeometry();
   const dC = Math.sqrt((w.x - g.C.x) ** 2 + (w.y - g.C.y) ** 2);
   const phi = phiOf(g, w);
@@ -308,20 +316,22 @@ function draw() {
 
   // Swing arc and aim line, only while the player is set up to swing.
   if (!G.anim && G.mode === 'play' && !G.balls[G.turn].done) {
-    const g = arcGeometry();
-    c.strokeStyle = 'rgba(255,255,255,.9)'; c.lineWidth = 3; c.setLineDash([8, 6]);
-    c.beginPath();
-    for (let i = 0; i <= 40; i++) {
-      const phi = (-140 + i * (200 / 40)) * Math.PI / 180;
-      const p = project(arcPoint(g, phi).x, arcPoint(g, phi).y);
-      i ? c.lineTo(p.x, p.y) : c.moveTo(p.x, p.y);
+    const b0 = G.balls[G.turn];
+    const ball0 = project(b0.pos.x, b0.pos.y);
+    if (!motionMode()) {
+      const g = arcGeometry();
+      c.strokeStyle = 'rgba(255,255,255,.9)'; c.lineWidth = 3; c.setLineDash([8, 6]);
+      c.beginPath();
+      for (let i = 0; i <= 40; i++) {
+        const phi = (-140 + i * (200 / 40)) * Math.PI / 180;
+        const p = project(arcPoint(g, phi).x, arcPoint(g, phi).y);
+        i ? c.lineTo(p.x, p.y) : c.moveTo(p.x, p.y);
+      }
+      c.stroke(); c.setLineDash([]);
     }
-    c.stroke(); c.setLineDash([]);
-    const b = G.balls[G.turn];
-    const ball = project(b.pos.x, b.pos.y);
-    const tip = project(b.pos.x + G.aim.x * 110, b.pos.y + G.aim.y * 110);
+    const tip = project(b0.pos.x + G.aim.x * 110, b0.pos.y + G.aim.y * 110);
     c.strokeStyle = 'rgba(29,43,26,.6)'; c.lineWidth = 3; c.setLineDash([6, 6]);
-    c.beginPath(); c.moveTo(ball.x, ball.y); c.lineTo(tip.x, tip.y); c.stroke(); c.setLineDash([]);
+    c.beginPath(); c.moveTo(ball0.x, ball0.y); c.lineTo(tip.x, tip.y); c.stroke(); c.setLineDash([]);
   }
 
   // Golfers and balls.
@@ -358,6 +368,78 @@ function loop() {
   }
   draw();
 }
+// ---- Phone putting ----
+// With the putter selected, the player sways the phone: back, then forward through the ball.
+// The gyroscope gives the rotation speed. The stroke axis is the one that moves most at the start.
+// Impact is when the rotation swings back through zero, moving forward. Power is the forward
+// speed there, path is the sideways turn at impact, and timing is how far past peak speed it was.
+let motionOn = false, mot = null;
+
+function enableMotion() {
+  const go = () => {
+    motionOn = true;
+    window.addEventListener('devicemotion', onMotion);
+    mot = null; renderClubs();
+    toast('Phone putting on. Sway the phone back, then forward.');
+  };
+  if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+    DeviceMotionEvent.requestPermission()
+      .then(r => r === 'granted' ? go() : toast('Motion access was denied in Settings'))
+      .catch(() => toast('Motion is not available here'));
+  } else if (typeof DeviceMotionEvent !== 'undefined') {
+    go();
+  } else {
+    toast('This device has no motion sensors');
+  }
+}
+function motionMode() { return motionOn && G && G.mode === 'play' && G.club === 0; }
+
+function resetMotion() {
+  mot = { axis: -1, axis2: -1, theta: 0, yaw: 0, sign: 0, backDone: false, peakW: 0, tPeak: 0, tStart: 0, lastT: 0 };
+}
+const BACK_DEG = 20, START_DEG_S = 40;
+function onMotion(e) {
+  if (!motionMode() || !G || G.busy || G.anim) return;
+  const r = e.rotationRate; if (!r) return;
+  const t = performance.now();
+  const rates = [r.alpha || 0, r.beta || 0, r.gamma || 0];
+  if (!mot) resetMotion();
+  const dt = mot.lastT ? Math.min(0.05, (t - mot.lastT) / 1000) : 0;
+  mot.lastT = t;
+
+  if (mot.axis < 0) {
+    // Wait for the phone to start moving, then pick the stroke axis.
+    let best = 0, second = -1;
+    for (let i = 1; i < 3; i++) if (Math.abs(rates[i]) > Math.abs(rates[best])) best = i;
+    if (Math.abs(rates[best]) < START_DEG_S) return;
+    for (let i = 0; i < 3; i++) if (i !== best && (second < 0 || Math.abs(rates[i]) > Math.abs(rates[second]))) second = i;
+    mot.axis = best; mot.axis2 = second; mot.tStart = t;
+  }
+  if (t - mot.tStart > 3000) { resetMotion(); return; }   // too slow, start over
+
+  const w = rates[mot.axis];
+  mot.theta += w * dt;
+  mot.yaw += rates[mot.axis2] * dt;
+
+  if (!mot.backDone) {
+    if (Math.abs(mot.theta) >= BACK_DEG) { mot.backDone = true; mot.sign = mot.theta > 0 ? 1 : -1; }
+    return;
+  }
+  // Forward stroke: moving opposite to the backswing.
+  if (w * mot.sign < 0 && Math.abs(w) > mot.peakW) { mot.peakW = Math.abs(w); mot.tPeak = t; }
+  if (mot.peakW > 0 && mot.theta * mot.sign <= 0) {
+    const speed = Math.abs(w);
+    const timingDeg = (t - mot.tPeak) / 1000 * speed;
+    const shotC = {
+      power: clampI(Math.round(speed / 400 * 1000), 0, 1000),
+      path: clampI(Math.round(mot.yaw * 10), -2000, 2000),
+      timing: clampI(Math.round(timingDeg * 10), -2000, 2000)
+    };
+    resetMotion();
+    fireSwing(shotC);
+  }
+}
+
 window.addEventListener('resize', () => { if ($('game').classList.contains('on')) resizeCanvas(); });
 show('menu');
 requestAnimationFrame(loop);
