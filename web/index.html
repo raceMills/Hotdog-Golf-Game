@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Hotdog Golf">
+<title>Hotdog Golf</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="screen on" id="menu">
+  <h1>🌭 Hotdog<br>Golf</h1>
+  <div class="card">
+    <button class="btn" onclick="goSetup(null)">⛳ Play a Round</button>
+    <button class="btn blue" onclick="goEvents()">🏆 Weekly Event</button>
+    <button class="btn blue" onclick="goPlayers()">🌭 Golfers &amp; Tags</button>
+    <button class="btn blue" onclick="goHistory()">📼 Round History</button>
+  </div>
+  <p class="small" style="text-align:center">Pass the phone to play. Send your code to friends after each round.</p>
+</div>
+
+<div class="screen" id="setup">
+  <button class="btn small" onclick="show('menu')">← Back</button>
+  <h2>Pick a course</h2>
+  <div id="courseList"></div>
+  <h2>Who's playing? (up to 4)</h2>
+  <div id="playerPick"></div>
+  <button class="btn" onclick="startFromSetup()">Tee Off!</button>
+</div>
+
+<div class="screen" id="events">
+  <button class="btn small" onclick="show('menu')">← Back</button>
+  <h2 id="evTitle">Weekly Event</h2>
+  <div class="card" id="evInfo"></div>
+  <button class="btn" onclick="playEvent()">Play This Event</button>
+  <h2>Leaderboard</h2>
+  <div class="card" id="evBoard"></div>
+  <h2>Paste a friend's code</h2>
+  <div class="card">
+    <textarea id="importBox" rows="4" placeholder="HDG1:..."></textarea>
+    <button class="btn small" onclick="importCodes()">Add Scores</button>
+    <div id="importMsg" class="small"></div>
+  </div>
+</div>
+
+<div class="screen" id="history">
+  <button class="btn small" onclick="show('menu')">← Back</button>
+  <h2>Round History</h2>
+  <div id="histList"></div>
+  <p class="small">Watch any saved round. Friends' codes show up here once you paste them in.</p>
+</div>
+
+<div class="screen" id="players">
+  <button class="btn small" onclick="show('menu')">← Back</button>
+  <h2>Golfers &amp; Tags</h2>
+  <p class="small">Tag 1 is the best. New golfers join last. Tags move after every round you play.</p>
+  <div id="plList"></div>
+  <button class="btn" onclick="editPlayer(null)">+ New Hotdog Golfer</button>
+  <button class="btn blue" onclick="shuffleTagsNow()">🎲 Shuffle All Tags</button>
+</div>
+
+<div class="screen" id="editor">
+  <button class="btn small" onclick="goPlayers()">← Back</button>
+  <h2 id="edTitle">Create your hotdog</h2>
+  <canvas id="ed_prev" width="200" height="200" style="width:200px;height:200px;align-self:center;background:#fff8e7;border:4px solid var(--ink);border-radius:20px"></canvas>
+  <label><h3>Name</h3><input type="text" id="ed_name" maxlength="16" oninput="draft.name=this.value"></label>
+  <h3>Bun</h3><div id="ed_skin" class="row"></div>
+  <h3>Topping</h3><div id="ed_shirt" class="row"></div>
+  <h3>Hat</h3><div id="ed_hat" class="row"></div>
+  <button class="btn" onclick="savePlayer()">Save Golfer</button>
+</div>
+
+<div class="screen" id="game">
+  <canvas id="c"></canvas>
+  <div class="hud"><div class="pill" id="holeLbl"></div><button class="pill" onclick="quitGame()">✕ Quit</button></div>
+  <div class="pill" id="turnLbl"></div>
+  <div class="pill" id="hint">Drag the arc through the ball like a backswing. Drag elsewhere to aim.</div>
+  <div id="clubs"></div>
+  <div id="power"><div id="powerFill"></div></div>
+  <div id="overlay"><div class="card" id="overlayBody"></div></div>
+</div>
+
+<div class="screen" id="score">
+  <h1 style="font-size:34px">Scorecard</h1>
+  <div id="scoreBody"></div>
+  <button class="btn" onclick="show('menu')">Back to Menu</button>
+</div>
+
+<div id="toast"></div>
+
+<script src="sim.js"></script>
+<script src="shot.js"></script>
+<script src="tags.js"></script>
+<script src="render.js"></script>
+<script src="game.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>
