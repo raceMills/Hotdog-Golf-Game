@@ -40,7 +40,7 @@ th { font-size: 13px; }
 .pill { background: var(--paper); border: 3px solid var(--ink); border-radius: 14px; padding: 6px 10px;
   font: inherit; font-weight: 800; color: var(--ink); box-shadow: 0 3px 0 var(--ink); pointer-events: auto; }
 #turnLbl { position: absolute; top: calc(env(safe-area-inset-top) + 56px); left: 50%; transform: translateX(-50%); white-space: nowrap; }
-#hint { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 118px); left: 50%; transform: translateX(-50%); white-space: nowrap; font-size: 14px; }
+#hint { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 150px); left: 50%; transform: translateX(-50%); width: 86%; text-align: center; font-size: 13px; line-height: 1.25; }
 #power { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 14px); left: 14px; right: 14px; height: 20px;
   border: 3px solid var(--ink); border-radius: 10px; background: var(--paper); overflow: hidden; }
 #powerFill { height: 100%; width: 0; background: linear-gradient(90deg, #7ae582, #ffd23f, #ff5964); }

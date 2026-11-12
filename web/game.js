@@ -37,17 +37,42 @@ function resizeCanvas() {
   view.w = r.width; view.h = r.height;
   cv.width = Math.round(r.width * view.dpr); cv.height = Math.round(r.height * view.dpr);
 }
-function sceneTransform() {
-  const s = view.w / 380;
-  const cam = G ? G.cam : { x: W / 2, y: H * TILT / 2 };
-  return { s: s, tx: view.w / 2 - cam.x * s, ty: view.h / 2 - cam.y * s };
+// ---- Camera ----
+// Putting (putter selected): the camera sits behind the ball and looks up the aim line, with the hole ahead.
+// Full shots: a 3rd-person view that follows the ball from above at an angle.
+const TILT_P = 0.45;                 // putting view: how far the green is foreshortened
+let curM = null;                     // this frame's world -> screen matrix
+function puttView() { return !!(G && G.mode === 'play' && G.club === 0); }
+function sceneMatrix() {
+  const w = view.w, h = view.h;
+  if (puttView()) {
+    const b = G.balls[G.turn];
+    const cup = G.C.holes[G.hole].cup;
+    const L = Math.max(40, Math.sqrt((cup[0] - b.pos.x) ** 2 + (cup[1] - b.pos.y) ** 2));
+    const ax = G.aim.x, ay = G.aim.y, rx = -ay, ry = ax;
+    const by = h * 0.72;
+    const s = Math.min((by - h * 0.17) / (TILT_P * L), w / 160);   // zoomed in, hole kept on screen
+    const A00 = s * rx, A01 = s * ry, A10 = -s * TILT_P * ax, A11 = -s * TILT_P * ay;
+    const e = w / 2 - (A00 * b.pos.x + A01 * b.pos.y);
+    const f = by - (A10 * b.pos.x + A11 * b.pos.y);
+    return { a: A00, b: A10, c: A01 / TILT, d: A11 / TILT, e: e, f: f, S: s };
+  }
+  const s = w / 380;
+  const cam = G && G.cam ? G.cam : { x: W / 2, y: H * TILT / 2 };
+  return { a: s, b: 0, c: 0, d: s, e: w / 2 - cam.x * s, f: h / 2 - cam.y * s, S: s };
 }
-// Screen point -> ground point (world units).
+// Ground point (world units) and height -> screen pixels, for the current frame.
+function toScreen(x, y, z) {
+  const M = curM, iy = TILT * y;
+  return { x: M.a * x + M.c * iy + M.e, y: M.b * x + M.d * iy + M.f - (z || 0) * M.S };
+}
+// Screen pixels -> ground point (world units).
 function screenToWorld(e) {
-  const r = cv.getBoundingClientRect(), st = sceneTransform();
-  const px = (e.clientX - r.left - st.tx) / st.s;
-  const py = (e.clientY - r.top - st.ty) / st.s;
-  return { x: px, y: py / TILT };
+  const r = cv.getBoundingClientRect(), M = sceneMatrix();
+  const sx = e.clientX - r.left - M.e, sy = e.clientY - r.top - M.f;
+  const det = M.a * M.d - M.b * M.c;
+  const ix = (sx * M.d - M.c * sy) / det, iy = (M.a * sy - M.b * sx) / det;
+  return { x: ix, y: iy / TILT };
 }
 
 // ---- Clubs and the swing arc ----
@@ -307,31 +332,37 @@ function fireSwing(c) {
 
 // ---- Drawing and loop ----
 function draw() {
-  const c = cx, dpr = view.dpr, st = sceneTransform();
+  const c = cx, dpr = view.dpr;
+  curM = sceneMatrix();
+  const M = curM;
   c.setTransform(dpr, 0, 0, dpr, 0, 0);
   c.fillStyle = '#9be7ff'; c.fillRect(0, 0, view.w, view.h);
-  c.setTransform(dpr * st.s, 0, 0, dpr * st.s, dpr * st.tx, dpr * st.ty);
-  const h = G.C.holes[G.hole];
-  drawCourse(c, G.C, h);
 
-  // Swing arc and aim line, only while the player is set up to swing.
+  // Course: ground coordinates, squashed by TILT, then through the scene matrix.
+  c.setTransform(dpr * M.a, dpr * M.b, dpr * M.c, dpr * M.d, dpr * M.e, dpr * M.f);
+  c.transform(1, 0, 0, TILT, 0, 0);
+  drawCourse(c, G.C, G.C.holes[G.hole]);
+
+  // Overlays and golfers: placed in screen pixels.
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
   if (!G.anim && G.mode === 'play' && !G.balls[G.turn].done) {
     const b0 = G.balls[G.turn];
-    const ball0 = project(b0.pos.x, b0.pos.y);
     if (!motionMode()) {
       const g = arcGeometry();
       c.strokeStyle = 'rgba(255,255,255,.9)'; c.lineWidth = 3; c.setLineDash([8, 6]);
       c.beginPath();
       for (let i = 0; i <= 40; i++) {
-        const phi = (-140 + i * (200 / 40)) * Math.PI / 180;
-        const p = project(arcPoint(g, phi).x, arcPoint(g, phi).y);
+        const q = arcPoint(g, (-140 + i * 5) * Math.PI / 180);
+        const p = toScreen(q.x, q.y, 0);
         i ? c.lineTo(p.x, p.y) : c.moveTo(p.x, p.y);
       }
       c.stroke(); c.setLineDash([]);
     }
-    const tip = project(b0.pos.x + G.aim.x * 110, b0.pos.y + G.aim.y * 110);
+    const from = toScreen(b0.pos.x, b0.pos.y, 0);
+    const tip = toScreen(b0.pos.x + G.aim.x * 110, b0.pos.y + G.aim.y * 110, 0);
     c.strokeStyle = 'rgba(29,43,26,.6)'; c.lineWidth = 3; c.setLineDash([6, 6]);
-    c.beginPath(); c.moveTo(ball0.x, ball0.y); c.lineTo(tip.x, tip.y); c.stroke(); c.setLineDash([]);
+    c.beginPath(); c.moveTo(from.x, from.y); c.lineTo(tip.x, tip.y); c.stroke(); c.setLineDash([]);
+    if (puttView()) drawPutter(c);
   }
 
   // Golfers and balls.
@@ -342,15 +373,16 @@ function draw() {
       const k = Math.min(Math.floor(G.anim.i), G.anim.pts.length - 1);
       x = G.anim.pts[k][0]; y = G.anim.pts[k][1]; z = G.anim.pts[k][2] || 0;
     }
-    const p = project(x, y, z);
-    const gp = project(x, y, 0);
-    drawHotdog(c, G.players[i].p, gp.x - 18, gp.y - 10, 0.7);
-    c.fillStyle = 'rgba(0,0,0,.25)'; c.beginPath(); c.ellipse(gp.x, gp.y + 2, BR, BR * TILT, 0, 0, Math.PI * 2); c.fill();
+    const p = toScreen(x, y, z);
+    const gp = toScreen(x, y, 0);
+    const sc = curM.S;
+    c.fillStyle = 'rgba(0,0,0,.22)'; c.beginPath(); c.ellipse(gp.x + 2, gp.y + 2, BR * sc, BR * sc * TILT, 0, 0, Math.PI * 2); c.fill();
+    drawHotdog(c, G.players[i].p, gp.x - 18 * sc, gp.y - 10 * sc, 0.7 * sc);
     c.fillStyle = '#fff'; c.strokeStyle = INK; c.lineWidth = 1.5;
-    c.beginPath(); c.arc(p.x, p.y, BR, 0, Math.PI * 2); c.fill(); c.stroke();
+    c.beginPath(); c.arc(p.x, p.y, BR * sc, 0, Math.PI * 2); c.fill(); c.stroke();
     if (i === G.turn && G.mode === 'play' && !G.anim && !b.done) {
       c.strokeStyle = '#ffd23f'; c.lineWidth = 2.5; c.setLineDash([3, 3]);
-      c.beginPath(); c.arc(p.x, p.y, BR + 5, 0, Math.PI * 2); c.stroke(); c.setLineDash([]);
+      c.beginPath(); c.arc(p.x, p.y, (BR + 5) * sc, 0, Math.PI * 2); c.stroke(); c.setLineDash([]);
     }
   });
 }
@@ -361,19 +393,21 @@ function loop() {
     const a = G.anim; a.i += 2;
     if (a.i >= a.pts.length - 1) { G.anim = null; a.onDone(); }
   }
-  if (G.balls.length && G.cam) {
+  if (G.balls.length && G.cam && !puttView()) {
     const b = G.balls[G.turn] || G.balls[0];
-    const t = project(b.pos.x, b.pos.y);
+    const t = { x: b.pos.x, y: b.pos.y * TILT };
     G.cam.x += (t.x - G.cam.x) * 0.08; G.cam.y += (t.y - G.cam.y) * 0.08;
   }
   draw();
 }
+
 // ---- Phone putting ----
 // With the putter selected, the player sways the phone: back, then forward through the ball.
 // The gyroscope gives the rotation speed. The stroke axis is the one that moves most at the start.
 // Impact is when the rotation swings back through zero, moving forward. Power is the forward
 // speed there, path is the sideways turn at impact, and timing is how far past peak speed it was.
 let motionOn = false, mot = null;
+const BACK_DEG = 20, START_DEG_S = 40, FULL_BACK_DEG = 30, FULL_SPEED = 400;
 
 function enableMotion() {
   const go = () => {
@@ -392,12 +426,15 @@ function enableMotion() {
     toast('This device has no motion sensors');
   }
 }
-function motionMode() { return motionOn && G && G.mode === 'play' && G.club === 0; }
+function motionMode() { return motionOn && puttView(); }
 
 function resetMotion() {
-  mot = { axis: -1, axis2: -1, theta: 0, yaw: 0, sign: 0, backDone: false, peakW: 0, tPeak: 0, tStart: 0, lastT: 0 };
+  mot = { axis: -1, axis2: -1, theta: 0, yaw: 0, sign: 0, back: 0, peakBack: 0, backDone: false,
+          peakW: 0, tPeak: 0, tStart: 0, lastT: 0 };
 }
-const BACK_DEG = 20, START_DEG_S = 40;
+// Phone sway -> putter. The first direction the phone moves is "back" (toward the golfer).
+// Phone back moves the putter head back; forward brings it through the ball.
+// Power = forward speed x sway length. Path = sideways turn. Timing = impact vs peak speed.
 function onMotion(e) {
   if (!motionMode() || !G || G.busy || G.anim) return;
   const r = e.rotationRate; if (!r) return;
@@ -406,38 +443,56 @@ function onMotion(e) {
   if (!mot) resetMotion();
   const dt = mot.lastT ? Math.min(0.05, (t - mot.lastT) / 1000) : 0;
   mot.lastT = t;
-
   if (mot.axis < 0) {
-    // Wait for the phone to start moving, then pick the stroke axis.
     let best = 0, second = -1;
     for (let i = 1; i < 3; i++) if (Math.abs(rates[i]) > Math.abs(rates[best])) best = i;
     if (Math.abs(rates[best]) < START_DEG_S) return;
     for (let i = 0; i < 3; i++) if (i !== best && (second < 0 || Math.abs(rates[i]) > Math.abs(rates[second]))) second = i;
     mot.axis = best; mot.axis2 = second; mot.tStart = t;
   }
-  if (t - mot.tStart > 3000) { resetMotion(); return; }   // too slow, start over
-
+  if (t - mot.tStart > 3000) { resetMotion(); return; }
   const w = rates[mot.axis];
   mot.theta += w * dt;
   mot.yaw += rates[mot.axis2] * dt;
-
-  if (!mot.backDone) {
-    if (Math.abs(mot.theta) >= BACK_DEG) { mot.backDone = true; mot.sign = mot.theta > 0 ? 1 : -1; }
-    return;
+  if (mot.sign === 0) {
+    if (Math.abs(mot.theta) < 3) return;
+    mot.sign = mot.theta > 0 ? 1 : -1;
   }
-  // Forward stroke: moving opposite to the backswing.
+  mot.back = mot.theta * mot.sign;
+  if (mot.back > mot.peakBack) mot.peakBack = mot.back;
+  if (!mot.backDone && mot.back >= BACK_DEG) mot.backDone = true;
+  if (!mot.backDone) return;
   if (w * mot.sign < 0 && Math.abs(w) > mot.peakW) { mot.peakW = Math.abs(w); mot.tPeak = t; }
-  if (mot.peakW > 0 && mot.theta * mot.sign <= 0) {
-    const speed = Math.abs(w);
+  if (mot.peakW > 0 && mot.back <= 0) {
+    const speed = mot.peakW;
+    const speedFrac = Math.min(1, speed / FULL_SPEED);
+    const lengthFrac = Math.min(1, mot.peakBack / FULL_BACK_DEG);
     const timingDeg = (t - mot.tPeak) / 1000 * speed;
     const shotC = {
-      power: clampI(Math.round(speed / 400 * 1000), 0, 1000),
+      power: clampI(Math.round(speedFrac * lengthFrac * 1000), 0, 1000),
       path: clampI(Math.round(mot.yaw * 10), -2000, 2000),
       timing: clampI(Math.round(timingDeg * 10), -2000, 2000)
     };
     resetMotion();
     fireSwing(shotC);
   }
+}
+
+// The putter: a shaft from the golfer's hands to a head at address, pulled back by the sway.
+function drawPutter(c) {
+  const b = G.balls[G.turn];
+  if (!b || b.done) return;
+  const back = mot && mot.back > 0 ? mot.back : 0;
+  const headOff = 6 + back * 0.8;
+  const head = toScreen(b.pos.x - G.aim.x * headOff, b.pos.y - G.aim.y * headOff, 0);
+  const hands = toScreen(b.pos.x - G.aim.x * 70, b.pos.y - G.aim.y * 70, 10);
+  c.lineCap = 'round';
+  c.strokeStyle = INK; c.lineWidth = 7;
+  c.beginPath(); c.moveTo(hands.x, hands.y); c.lineTo(head.x, head.y); c.stroke();
+  c.strokeStyle = '#eceff1'; c.lineWidth = 3.5;
+  c.beginPath(); c.moveTo(hands.x, hands.y); c.lineTo(head.x, head.y); c.stroke();
+  c.fillStyle = '#cfd8dc'; c.strokeStyle = INK; c.lineWidth = 2;
+  c.beginPath(); c.roundRect(head.x - 11, head.y - 5, 22, 10, 4); c.fill(); c.stroke();
 }
 
 window.addEventListener('resize', () => { if ($('game').classList.contains('on')) resizeCanvas(); });
